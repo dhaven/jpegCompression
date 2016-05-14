@@ -12,16 +12,45 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-/**
-* test on 4 pixels image :
-* top-left : color red, RGB is (255,0,0),
-* top-right : color green, RGB is (0,255,0),
-* down-left : color blue, RGB is (0,0,255),
-* down-right : color yellow, RGB is (255,255,0),
-*/
 typedef unsigned char uchar;
 double C[8][8];
 double Ct[8][8];
+int lumQuantTable[64] = {16,11,10,16,24,40,51,61,
+			12,12,14,19,26,58,60,55,
+			14,13,16,24,40,57,69,56,
+			14,17,22,29,51,87,80,62,
+			18,22,37,56,68,109,103,77,
+			24,35,55,64,81,104,113,92,
+			49,64,78,87,103,121,120,101,
+			72,92,95,98,112,100,103,99};
+
+int chromQuantTable[64] = {17,18,24,47,99,99,99,99,
+			18,21,26,66,99,99,99,99,
+			24,26,56,99,99,99,99,99,
+			47,66,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99};
+
+//quantize an 8x8 block
+void quantization(int *channel,int width, int offset, int *quantTable){
+	int i;
+	int j;
+	for(i = 0; i < 8; i++){
+		for(j = 0; j < 8; j++){
+			channel[i*width+j] = ROUND(channel[(i*width+j)+(8*offset)]/quantTable[(i*width+j)+(8*offset)]);
+		}
+	}
+}
+
+void quantizeAll(int *channel, int width, int height, int *quantTable){
+	int numBlocks = (width/8) * (height/8);
+	int i;
+	for(i = 0; i < numBlocks; i++){
+		quantization(channel,width,i,quantTable);
+	}	
+}
 
 void computeCmatrix(double C[8][8],double Ct[8][8],int N){
 	double pi = atan( 1.0 ) * 4.0;
@@ -150,19 +179,27 @@ void main(int argc, char *argv[]){
 		Crline = y/2;
 		Crcolumn = x/2;
 	}
-	int channelY[64] = {52,55,61,66,70,61,64,73,
+	/**int channelY[64] = {52,55,61,66,70,61,64,73,
 					63,59,55,90,109,85,69,72,
 					62,59,68,113,144,104,66,73,
 					63,58,71,122,154,106,70,69,
 					67,61,68,104,126,88,68,70,
 					79,65,60,70,77,68,58,75,
 					85,71,64,59,55,61,65,83,
-					87,79,69,68,65,76,78,94};
-
+					87,79,69,68,65,76,78,94};**/
+	
+	int channelY[Yline*Ycolumn];
 	int channelCb[Cbline*Cbcolumn];
 	int channelCr[Crline*Crcolumn];
-	//downsample(data,b,x,y,channelY,channelCb,channelCr);
-	/**printf("Y channel\n");
+	downsample(data,b,x,y,channelY,channelCb,channelCr);
+	computeCmatrix(C,Ct,8);
+	computeAllDCT(channelY,Ycolumn,Yline);
+	computeAllDCT(channelCb,Cbcolumn,Cbline);
+	computeAllDCT(channelCr,Crcolumn,Crline);
+	quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
+	quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
+	quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
+	printf("Y channel\n");
 	printf("\n");
 	int i;
 	int j;
@@ -189,20 +226,7 @@ void main(int argc, char *argv[]){
 			printf("%d ",channelCr[i*Crcolumn +j]);
 		}
 		printf("\n");
-	}**/
-	computeCmatrix(C,Ct,8);
-	computeAllDCT(channelY,Ycolumn,Yline);
-	printf("Y channel\n");
-	printf("\n");
-	int i;
-	int j;
-	for(i = 0; i < Yline; i++){
-		for(j = 0; j < Ycolumn; j++){
-			printf("%d ",channelY[i*Ycolumn +j]);
-		}
-		printf("\n");
 	}
-	printf("\n");
 	stbi_image_free(data);
 }
 
