@@ -34,8 +34,8 @@ void computeCmatrix(double C[8][8],double Ct[8][8],int N){
 	}
 	for(j = 1; j < N; j++){
 		for(k = 0; k < N; k++){
-			C[j][k] = sqrt(2.0/(double)N)*cos((j*(2*k+1)*pi)/2.0*N);
-			Ct[k][j] = Ct[j][k];
+			C[j][k] = sqrt(2.0/(double)N)*cos((j*(2*k+1)*pi)/(2.0*N));
+			Ct[k][j] = C[j][k];
 		}
 	}
 
@@ -51,7 +51,8 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 		for(j = 0; j < 8; j++){
 			temp[i][j] = 0.0;
 			for(k = 0; k < 8; k++){
-				temp[i][j] += C[i][k]*((*(channel+(k*x+j+8*offset)))-128);
+				temp[i][j] += (*(channel+((i*x+k)+(8*offset)))-128) * Ct[k][j]; 
+				//temp[i][j] += channel[i][k]*Ct[k][j];
 			}
 		}
 	}
@@ -59,9 +60,9 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 		for(j = 0; j < 8; j++){
 			temp2 = 0.0;
 			for(k = 0; k < 8; k++){
-				temp2+=temp[i][k]*Ct[k][j];
+				temp2+=C[i][k]*temp[k][j];
 			}
-			*(channel+i*x+j+8*offset) = ROUND(temp2);
+			*(channel+(i*x+j)+(8*offset)) = ROUND(temp2);
 		}
 	}	
 }
@@ -149,10 +150,18 @@ void main(int argc, char *argv[]){
 		Crline = y/2;
 		Crcolumn = x/2;
 	}
-	int channelY[Yline*Ycolumn];
+	int channelY[64] = {52,55,61,66,70,61,64,73,
+					63,59,55,90,109,85,69,72,
+					62,59,68,113,144,104,66,73,
+					63,58,71,122,154,106,70,69,
+					67,61,68,104,126,88,68,70,
+					79,65,60,70,77,68,58,75,
+					85,71,64,59,55,61,65,83,
+					87,79,69,68,65,76,78,94};
+
 	int channelCb[Cbline*Cbcolumn];
 	int channelCr[Crline*Crcolumn];
-	downsample(data,b,x,y,channelY,channelCb,channelCr);
+	//downsample(data,b,x,y,channelY,channelCb,channelCr);
 	/**printf("Y channel\n");
 	printf("\n");
 	int i;
@@ -181,6 +190,7 @@ void main(int argc, char *argv[]){
 		}
 		printf("\n");
 	}**/
+	computeCmatrix(C,Ct,8);
 	computeAllDCT(channelY,Ycolumn,Yline);
 	printf("Y channel\n");
 	printf("\n");
