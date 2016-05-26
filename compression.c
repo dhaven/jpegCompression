@@ -76,12 +76,15 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 	int i;
 	int j;
 	int k;
+	int lineCoord;
+	int colCoord;
 	for(i = 0; i < 8; i++){
+		lineCoord = (i+ 8*(offset/(y/8)))*x;
 		for(j = 0; j < 8; j++){
 			temp[i][j] = 0.0;
 			for(k = 0; k < 8; k++){
-				temp[i][j] += (*(channel+((i*x+k)+(8*offset)))-128) * Ct[k][j]; 
-				//temp[i][j] += channel[i][k]*Ct[k][j];
+				colCoord = k+ (8*(offset % (x/8)));
+				temp[i][j] += (*(channel+ lineCoord + colCoord)-128) * Ct[k][j]; 
 			}
 		}
 	}
@@ -91,7 +94,9 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 			for(k = 0; k < 8; k++){
 				temp2+=C[i][k]*temp[k][j];
 			}
-			*(channel+(i*x+j)+(8*offset)) = ROUND(temp2);
+			lineCoord = (i+ 8*(offset/(y/8)))*x;
+			colCoord = j+ (8*(offset % (x/8)));
+			*(channel+lineCoord+colCoord) = ROUND(temp2);
 		}
 	}	
 }
@@ -179,14 +184,22 @@ void main(int argc, char *argv[]){
 		Crline = y/2;
 		Crcolumn = x/2;
 	}
-	/**int channelY[64] = {52,55,61,66,70,61,64,73,
-					63,59,55,90,109,85,69,72,
-					62,59,68,113,144,104,66,73,
-					63,58,71,122,154,106,70,69,
-					67,61,68,104,126,88,68,70,
-					79,65,60,70,77,68,58,75,
-					85,71,64,59,55,61,65,83,
-					87,79,69,68,65,76,78,94};**/
+	/**int channelY[256] = {52,55,61,66,70,61,64,73,52,55,61,66,70,61,64,73,
+					63,59,55,90,109,85,69,72,63,59,55,90,109,85,69,72,
+					62,59,68,113,144,104,66,73,62,59,68,113,144,104,66,73,
+					63,58,71,122,154,106,70,69,63,58,71,122,154,106,70,69,
+					67,61,68,104,126,88,68,70,67,61,68,104,126,88,68,70,
+					79,65,60,70,77,68,58,75,79,65,60,70,77,68,58,75,
+					85,71,64,59,55,61,65,83,85,71,64,59,55,61,65,83,
+					87,79,69,68,65,76,78,94,87,79,69,68,65,76,78,94,
+					52,55,61,66,70,61,64,73,52,55,61,66,70,61,64,73,
+					63,59,55,90,109,85,69,72,63,59,55,90,109,85,69,72,
+					62,59,68,113,144,104,66,73,62,59,68,113,144,104,66,73,
+					63,58,71,122,154,106,70,69,63,58,71,122,154,106,70,69,
+					67,61,68,104,126,88,68,70,67,61,68,104,126,88,68,70,
+					79,65,60,70,77,68,58,75,79,65,60,70,77,68,58,75,
+					85,71,64,59,55,61,65,83,85,71,64,59,55,61,65,83,
+					87,79,69,68,65,76,78,94,87,79,69,68,65,76,78,94};**/
 	
 	int channelY[Yline*Ycolumn];
 	int channelCb[Cbline*Cbcolumn];
@@ -194,6 +207,7 @@ void main(int argc, char *argv[]){
 	downsample(data,b,x,y,channelY,channelCb,channelCr);
 	computeCmatrix(C,Ct,8);
 	computeAllDCT(channelY,Ycolumn,Yline);
+	//computeDCT(channelY,Ycolumn,Yline,C,Ct,0);
 	computeAllDCT(channelCb,Cbcolumn,Cbline);
 	computeAllDCT(channelCr,Crcolumn,Crline);
 	quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
