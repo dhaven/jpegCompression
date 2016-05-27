@@ -143,7 +143,7 @@ void downsample(uchar *pixel, int b, int x, int y, int *Ychannel, int *Cbchannel
 }
 
 //should be called with an image argument
-//should be called with 3 options with argument
+//should be called with  options with argument
 // option is -b with values corresponding to downsampling ratios
 // ie 4 for 4:4:4, 2 for4:2:2 and 0 for 4:0:0
 // a valid call is ./test -b 2 4pixels.bmp
@@ -205,14 +205,14 @@ void main(int argc, char *argv[]){
 	int channelCb[Cbline*Cbcolumn];
 	int channelCr[Crline*Crcolumn];
 	downsample(data,b,x,y,channelY,channelCb,channelCr);
-	computeCmatrix(C,Ct,8);
-	computeAllDCT(channelY,Ycolumn,Yline);
+	//computeCmatrix(C,Ct,8);
+	//computeAllDCT(channelY,Ycolumn,Yline);
 	//computeDCT(channelY,Ycolumn,Yline,C,Ct,0);
-	computeAllDCT(channelCb,Cbcolumn,Cbline);
-	computeAllDCT(channelCr,Crcolumn,Crline);
-	quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
-	quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
-	quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
+	//computeAllDCT(channelCb,Cbcolumn,Cbline);
+	//computeAllDCT(channelCr,Crcolumn,Crline);
+	//quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
+	//quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
+	//quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
 	printf("Y channel\n");
 	printf("\n");
 	int i;
