@@ -205,11 +205,11 @@ void main(int argc, char *argv[]){
 	int channelCb[Cbline*Cbcolumn];
 	int channelCr[Crline*Crcolumn];
 	downsample(data,b,x,y,channelY,channelCb,channelCr);
-	//computeCmatrix(C,Ct,8);
-	//computeAllDCT(channelY,Ycolumn,Yline);
+	computeCmatrix(C,Ct,8);
+	computeAllDCT(channelY,Ycolumn,Yline);
 	//computeDCT(channelY,Ycolumn,Yline,C,Ct,0);
-	//computeAllDCT(channelCb,Cbcolumn,Cbline);
-	//computeAllDCT(channelCr,Crcolumn,Crline);
+	computeAllDCT(channelCb,Cbcolumn,Cbline);
+	computeAllDCT(channelCr,Crcolumn,Crline);
 	//quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
 	//quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
 	//quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
