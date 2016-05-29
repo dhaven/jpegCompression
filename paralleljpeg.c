@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define ROUND( a )      ( ( (a) < 0 ) ? (int) ( (a) - 0.5 ) : \
                                                   (int) ( (a) + 0.5 ) )
@@ -24,6 +25,21 @@ int *Ychannel;
 int *Cbchannel;
 int *Crchannel;
 uchar *data;
+
+int numConsumedDCTY;
+pthread_mutex_t mutexDCTY;
+lockableNode *buffDCTYchan = NULL;
+sem_t semDCTYchan;
+
+int numConsumedDCTCb;
+pthread_mutex_t mutexDCTCb;
+lockableNode *buffDCTCbchan = NULL;
+sem_t semDCTCbchan;
+
+int numConsumedDCTCr;
+pthread_mutex_t mutexDCTCr;
+lockableNode *buffDCTCrchan = NULL;
+sem_t semDCTCrchan;
 
 void computeCmatrix(double C[8][8],double Ct[8][8],int N){
 	double pi = atan( 1.0 ) * 4.0;
@@ -84,6 +100,20 @@ lockableNode* getFirstUnlockedElem(lockableNode* startList){
 	return NULL;
 }
 
+void addElementAtFront(lockableNode* element, lockableNode** list){
+	element->next = *list;
+	*list = element;
+}
+
+lockableNode* createNewNode(int index){
+	lockableNode *newNode = (lockableNode*) malloc(sizeof(lockableNode));
+	newNode->offset = index;
+	newNode->validity = 1;
+	newNode->next = NULL;
+	pthread_mutex_init(&(newNode->mutex),NULL);
+	return newNode;
+}
+
 void fromRGBtoYCbCr(uchar *pixel, int *Ychannel, int *Cbchannel, int *Crchannel){
 	*Ychannel = (int) (0 + (0.299*(*pixel))+(0.587*(*(pixel+1)))+(0.114*(*(pixel+2)))); //Y
 	*Cbchannel = (int) (128 - (0.168736*(*pixel))-(0.331264*(*(pixel+1)))+(0.5*(*(pixel+2)))); //Cb
@@ -130,6 +160,12 @@ void* subSampling(void* param){
 				}
 			}
 		}
+		addElementAtFront(createNewNode(index),&buffDCTYchan);
+		sem_post(&semDCTYchan);
+		addElementAtFront(createNewNode(index),&buffDCTCbchan);
+		sem_post(&semDCTCbchan);
+		addElementAtFront(createNewNode(index),&buffDCTCrchan);
+		sem_post(&semDCTCrchan);
 		blockindexNode = getFirstUnlockedElem(firstBuffer);
 	}
 	return NULL;
@@ -137,20 +173,216 @@ void* subSampling(void* param){
 
 void downsample(int numThreads){
 	pthread_t threads[numThreads];
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	int i;
 	int err;
 	for(i = 0; i < numThreads; i++){
-		err = pthread_create(&(threads[i]),NULL,&subSampling,NULL);
+		err = pthread_create(&(threads[i]),&attr,&subSampling,NULL);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
-	for(i=numThreads-1;i>=0;i--) {
-		err=pthread_join(threads[i],NULL);
+}
+
+void computeDCT(int *channel, int y, int x,int offset){
+	double temp[8][8];
+	double temp2;
+	int i;
+	int j;
+	int k;
+	int lineCoord;
+	int colCoord;
+	for(i = 0; i < 8; i++){
+		lineCoord = (i+ 8*(offset/(y/8)))*x;
+		for(j = 0; j < 8; j++){
+			temp[i][j] = 0.0;
+			for(k = 0; k < 8; k++){
+				colCoord = k+ (8*(offset % (x/8)));
+				temp[i][j] += (*(channel+ lineCoord + colCoord)-128) * Ct[k][j]; 
+			}
+		}
+	}
+	for(i = 0; i < 8; i++){
+		for(j = 0; j < 8; j++){
+			temp2 = 0.0;
+			for(k = 0; k < 8; k++){
+				temp2+=C[i][k]*temp[k][j];
+			}
+			lineCoord = (i+ 8*(offset/(y/8)))*x;
+			colCoord = j+ (8*(offset % (x/8)));
+			*(channel+lineCoord+colCoord) = ROUND(temp2);
+		}
+	}
+}
+
+
+void* dispatchForProcessing(void *arg){
+	char *param = (char *)arg;
+	int size;
+	if(*param == 'y'){
+		pthread_mutex_lock(&mutexDCTY);
+		size = numConsumedDCTY;
+		while(size < (Yline/8)*(Ycolumn/8)){
+			numConsumedDCTY += 1;
+			printf("%d-Y \n",numConsumedDCTY);
+			pthread_mutex_unlock(&mutexDCTY);
+			sem_wait(&semDCTYchan);
+			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTYchan);
+			computeDCT(Ychannel,Yline,Ycolumn,blockindexNode->offset);
+			pthread_mutex_lock(&mutexDCTY);
+			size = numConsumedDCTY;
+		}
+		pthread_mutex_unlock(&mutexDCTY);
+		printf("thread ends\n");
+	}else if(*param == 'b'){
+		pthread_mutex_lock(&mutexDCTCb);
+		size = numConsumedDCTCb;
+		while(size < (Yline/8)*(Ycolumn/8)){
+			numConsumedDCTCb += 1;
+			printf("%d-Cb \n",numConsumedDCTCb);
+			pthread_mutex_unlock(&mutexDCTCb);
+			sem_wait(&semDCTCbchan);
+			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCbchan);
+			computeDCT(Cbchannel,Cbline,Cbcolumn,blockindexNode->offset);
+			pthread_mutex_lock(&mutexDCTCb);
+			size = numConsumedDCTCb;
+		}
+		pthread_mutex_unlock(&mutexDCTCb);
+		printf("thread ends\n");
+	}else{
+		pthread_mutex_lock(&mutexDCTCr);
+		size = numConsumedDCTCr;
+		while(size < (Yline/8)*(Ycolumn/8)){
+			numConsumedDCTCr += 1;
+			printf("%d-Cr \n",numConsumedDCTCr);
+			pthread_mutex_unlock(&mutexDCTCr);
+			sem_wait(&semDCTCrchan);
+			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCrchan);
+			computeDCT(Crchannel,Crline,Crcolumn,blockindexNode->offset);
+			pthread_mutex_lock(&mutexDCTCr);
+			size = numConsumedDCTCr;
+		}
+		pthread_mutex_unlock(&mutexDCTCr);
+		printf("thread ends\n");
+	}
+	return NULL;	
+}
+
+
+void DCTparallelStep(int numThreads){
+	pthread_t YchanThreads[numThreads];
+	int i;
+	int err;
+	for(i = 0; i < numThreads; i++){
+		char arg = 'y';
+		err = pthread_create(&(YchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+	pthread_t CbchanThreads[numThreads];
+	for(i = 0; i < numThreads; i++){
+		char arg = 'r';
+		err = pthread_create(&(CbchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+	pthread_t CrchanThreads[numThreads];
+	for(i = 0; i < numThreads; i++){
+		char arg = 'b';
+		err = pthread_create(&(CrchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+	for(i=0;i<numThreads;i++) {
+		err=pthread_join(YchanThreads[i],NULL);
+		if(err!=0)
+			error(err,"pthread_join");
+		
+	}
+	for(i=0;i<numThreads;i++) {
+		err=pthread_join(CbchanThreads[i],NULL);
+		if(err!=0)
+			error(err,"pthread_join");
+		
+	}
+	for(i=0;i<numThreads;i++) {
+		err=pthread_join(CrchanThreads[i],NULL);
 		if(err!=0)
 			error(err,"pthread_join");
 		
 	}
 }
+
+void initGlobalVariables(){
+	Ychannel = (int*) malloc(Yline*Ycolumn*sizeof(int));
+	Cbchannel = (int*) malloc(Cbline*Cbcolumn*sizeof(int));
+	Crchannel = (int*) malloc(Crline*Crcolumn*sizeof(int));
+	int numBlocks = (Yline/8)*(Ycolumn/8);
+	firstBuffer = initFineGrainedList(numBlocks);
+	sem_init(&semDCTYchan, 0, 0);
+	sem_init(&semDCTCbchan, 0, 0);
+	sem_init(&semDCTCrchan, 0, 0);
+	pthread_mutex_init(&mutexDCTY,NULL);
+	pthread_mutex_init(&mutexDCTCb,NULL);
+	pthread_mutex_init(&mutexDCTCr,NULL);
+	numConsumedDCTY = 0;
+	numConsumedDCTCb = 0;
+	numConsumedDCTCr = 0;
+}
+
+void freeGlobalVariables(){
+	free(Ychannel);
+	free(Cbchannel);
+	free(Crchannel);
+	sem_destroy(&semDCTYchan);
+	sem_destroy(&semDCTCbchan);
+	sem_destroy(&semDCTCrchan);
+	pthread_mutex_destroy(&mutexDCTY);
+	pthread_mutex_destroy(&mutexDCTCb);
+	pthread_mutex_destroy(&mutexDCTCr);
+	
+	int i;
+	lockableNode* tmp = firstBuffer->next;
+	int numBlocks = (Yline/8)*(Ycolumn/8);
+	for(i = 0; i < numBlocks; i++){
+		free(firstBuffer);
+		firstBuffer = tmp;
+		if(tmp != NULL){
+			tmp = tmp->next;
+		}
+	}
+	int j;
+	tmp = buffDCTYchan->next;
+	while(buffDCTYchan != NULL){
+		//printf("%d,",buffDCTYchan->offset);
+		free(buffDCTYchan);
+		buffDCTYchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+	tmp = buffDCTCbchan->next;
+	while(buffDCTCbchan != NULL){
+		//printf("%d,",buffDCTCbchan->offset);
+		free(buffDCTCbchan);
+		buffDCTCbchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+	tmp = buffDCTCrchan->next;
+	while(buffDCTCrchan != NULL){
+		//printf("%d,",buffDCTCrchan->offset);
+		free(buffDCTCrchan);
+		buffDCTCrchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+
+}
+
 void main(int argc, char *argv[]){
 	int x,y,n;
 	int option;
@@ -187,23 +419,12 @@ void main(int argc, char *argv[]){
 		Crcolumn = x/2;
 	}
 	
-	Ychannel = (int*) malloc(Yline*Ycolumn*sizeof(int));
-	Cbchannel = (int*) malloc(Cbline*Cbcolumn*sizeof(int));
-	Crchannel = (int*) malloc(Crline*Crcolumn*sizeof(int));
-	//computeCmatrix(C,Ct,8);
 	long int numThreads = sysconf(_SC_NPROCESSORS_ONLN);
-	int numBlocks = (Yline/8)*(Ycolumn/8);
-	firstBuffer = initFineGrainedList(numBlocks);
+	initGlobalVariables();
 	downsample(numThreads);
+	computeCmatrix(C,Ct,8);
+	DCTparallelStep(numThreads);
 	int i;
-	lockableNode* tmp = firstBuffer->next;
-	for(i = 0; i < numBlocks; i++){
-		free(firstBuffer);
-		firstBuffer = tmp;
-		if(tmp != NULL){
-			tmp = tmp->next;
-		}
-	}
 	int j;
 	for(i = 0; i < Yline; i++){
 		for(j = 0; j < Ycolumn; j++){
@@ -229,9 +450,7 @@ void main(int argc, char *argv[]){
 		}
 		printf("\n");
 	}
-	free(Ychannel);
-	free(Cbchannel);
-	free(Crchannel);
+	freeGlobalVariables();
 	stbi_image_free(data);
 }
 
