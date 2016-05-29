@@ -86,14 +86,51 @@ lockableNode* initFineGrainedList(int size){
 lockableNode* getFirstUnlockedElem(lockableNode* startList){
 	lockableNode* temp = startList;
 	while(temp != NULL){
-		if(temp->validity){
-			if( pthread_mutex_trylock(&(startList->mutex)) == 0){
+		if( pthread_mutex_trylock(&(temp->mutex)) == 0){
+			if(temp->validity){
 				temp->validity = 0;
-				int err=pthread_mutex_unlock(&(startList->mutex));
+				int err=pthread_mutex_unlock(&(temp->mutex));
 				if(err!=0)
 					error(err,"pthread_mutex_unlock");
 				return temp;
+			}else{
+				pthread_mutex_unlock(&(temp->mutex));
 			}
+		}
+		temp = temp->next;
+	}
+	return NULL;
+}
+
+int areInList(lockableNode* startList,int next, int below, int diag){
+	lockableNode *temp = startList;
+	printf("%d-%d-%d\n",next,below,diag);
+	int count = 0;
+	while(temp != NULL && count < 3){
+		if(temp->offset == next || temp->offset == below || temp->offset == diag){
+			count++;
+		}
+		temp = temp->next;
+	}
+	printf("%d\n",count);
+	return count == 3;
+}
+
+lockableNode* getFirstElemFor420(lockableNode* startList, int numBlocksWidth){
+	lockableNode *temp = startList;
+	while(temp != NULL){
+		if(((temp->offset)%2 == 0)  && ((temp->offset)%(2*numBlocksWidth) == (temp->offset)%numBlocksWidth)){
+			if( pthread_mutex_trylock(&(temp->mutex)) == 0){
+				if(temp->validity && areInList(startList,(temp->offset)+1,(temp->offset)+numBlocksWidth,(temp->offset)+1+numBlocksWidth)){
+					temp->validity = 0;
+					int err=pthread_mutex_unlock(&(temp->mutex));
+					if(err!=0)
+						error(err,"pthread_mutex_unlock");
+					return temp;
+				}else{
+					pthread_mutex_unlock(&(temp->mutex));
+				}
+			}	
 		}
 		temp = temp->next;
 	}
@@ -225,7 +262,7 @@ void* dispatchForProcessing(void *arg){
 		size = numConsumedDCTY;
 		while(size < (Yline/8)*(Ycolumn/8)){
 			numConsumedDCTY += 1;
-			printf("%d-Y \n",numConsumedDCTY);
+			//printf("%d-Y \n",numConsumedDCTY);
 			pthread_mutex_unlock(&mutexDCTY);
 			sem_wait(&semDCTYchan);
 			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTYchan);
@@ -234,37 +271,80 @@ void* dispatchForProcessing(void *arg){
 			size = numConsumedDCTY;
 		}
 		pthread_mutex_unlock(&mutexDCTY);
-		printf("thread ends\n");
+		//printf("thread ends\n");
 	}else if(*param == 'b'){
-		pthread_mutex_lock(&mutexDCTCb);
-		size = numConsumedDCTCb;
-		while(size < (Yline/8)*(Ycolumn/8)){
-			numConsumedDCTCb += 1;
-			printf("%d-Cb \n",numConsumedDCTCb);
-			pthread_mutex_unlock(&mutexDCTCb);
-			sem_wait(&semDCTCbchan);
-			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCbchan);
-			computeDCT(Cbchannel,Cbline,Cbcolumn,blockindexNode->offset);
+		if(b == 4){
 			pthread_mutex_lock(&mutexDCTCb);
 			size = numConsumedDCTCb;
+			while(size < (Yline/8)*(Ycolumn/8)){
+				numConsumedDCTCb += 1;
+				//printf("%d-Cb \n",numConsumedDCTCb);
+				pthread_mutex_unlock(&mutexDCTCb);
+				sem_wait(&semDCTCbchan);
+				lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCbchan);
+				computeDCT(Cbchannel,Cbline,Cbcolumn,blockindexNode->offset);
+				pthread_mutex_lock(&mutexDCTCb);
+				size = numConsumedDCTCb;
+			}
+			pthread_mutex_unlock(&mutexDCTCb);
+			//printf("thread ends\n");
+		}else{
+			pthread_mutex_lock(&mutexDCTCb);
+			size = numConsumedDCTCb;
+			while(size < (Cbline/8)*(Cbcolumn/8)){
+				numConsumedDCTCb += 1;
+				//printf("%d-Cb \n",numConsumedDCTCb);
+				pthread_mutex_unlock(&mutexDCTCb);
+				sem_wait(&semDCTCbchan);
+				lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
+				while(blockindexNode == NULL){
+					printf("waiting");
+					sem_wait(&semDCTCbchan);
+					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
+				}
+				computeDCT(Cbchannel,Cbline,Cbcolumn,(blockindexNode->offset)/2);
+				pthread_mutex_lock(&mutexDCTCb);
+				size = numConsumedDCTCb;
+			}
+			pthread_mutex_unlock(&mutexDCTCb);
+			//printf("thread ends\n");
 		}
-		pthread_mutex_unlock(&mutexDCTCb);
-		printf("thread ends\n");
 	}else{
-		pthread_mutex_lock(&mutexDCTCr);
-		size = numConsumedDCTCr;
-		while(size < (Yline/8)*(Ycolumn/8)){
-			numConsumedDCTCr += 1;
-			printf("%d-Cr \n",numConsumedDCTCr);
-			pthread_mutex_unlock(&mutexDCTCr);
-			sem_wait(&semDCTCrchan);
-			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCrchan);
-			computeDCT(Crchannel,Crline,Crcolumn,blockindexNode->offset);
+		if(b == 4){
 			pthread_mutex_lock(&mutexDCTCr);
 			size = numConsumedDCTCr;
+			while(size < (Crline/8)*(Crcolumn/8)){
+				numConsumedDCTCr += 1;
+				//printf("%d-Cr \n",numConsumedDCTCr);
+				pthread_mutex_unlock(&mutexDCTCr);
+				sem_wait(&semDCTCrchan);
+				lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCrchan);
+				computeDCT(Crchannel,Crline,Crcolumn,blockindexNode->offset);
+				pthread_mutex_lock(&mutexDCTCr);
+				size = numConsumedDCTCr;
+			}
+			pthread_mutex_unlock(&mutexDCTCr);
+			//printf("thread ends\n");
+		}else{
+			pthread_mutex_lock(&mutexDCTCr);
+			size = numConsumedDCTCr;
+			while(size < (Crline/8)*(Crcolumn/8)){
+				numConsumedDCTCr += 1;
+				printf("%d-Cr \n",numConsumedDCTCr);
+				pthread_mutex_unlock(&mutexDCTCr);
+				sem_wait(&semDCTCrchan);
+				lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
+				while(blockindexNode == NULL){
+					sem_wait(&semDCTCrchan);
+					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
+				}
+				computeDCT(Crchannel,Crline,Crcolumn,(blockindexNode->offset)/2);
+				pthread_mutex_lock(&mutexDCTCr);
+				size = numConsumedDCTCr;
+			}
+			pthread_mutex_unlock(&mutexDCTCr);
+			//printf("thread ends\n");
 		}
-		pthread_mutex_unlock(&mutexDCTCr);
-		printf("thread ends\n");
 	}
 	return NULL;	
 }
@@ -276,20 +356,23 @@ void DCTparallelStep(int numThreads){
 	int err;
 	for(i = 0; i < numThreads; i++){
 		char arg = 'y';
+		//printf("YthreadCreated\n");
 		err = pthread_create(&(YchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
 	pthread_t CbchanThreads[numThreads];
 	for(i = 0; i < numThreads; i++){
-		char arg = 'r';
+		char arg = 'b';
+		//printf("CbthreadCreated\n");
 		err = pthread_create(&(CbchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
 	pthread_t CrchanThreads[numThreads];
 	for(i = 0; i < numThreads; i++){
-		char arg = 'b';
+		char arg = 'r';
+		//printf("CrthreadCreated\n");
 		err = pthread_create(&(CrchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
