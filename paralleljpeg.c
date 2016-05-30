@@ -116,12 +116,47 @@ int areInList(lockableNode* startList,int next, int below, int diag){
 	return count == 3;
 }
 
+int isInList(lockableNode* startList,int next){
+	lockableNode *temp = startList;
+	//printf("%d-%d-%d\n",next,below,diag);
+	int count = 0;
+	while(temp != NULL && count < 1){
+		if(temp->offset == next){
+			count++;
+		}
+		temp = temp->next;
+	}
+	//printf("%d\n",count);
+	return count == 1;
+}
+
 lockableNode* getFirstElemFor420(lockableNode* startList, int numBlocksWidth){
 	lockableNode *temp = startList;
 	while(temp != NULL){
 		if(((temp->offset)%2 == 0)  && ((temp->offset)%(2*numBlocksWidth) == (temp->offset)%numBlocksWidth)){
 			if( pthread_mutex_trylock(&(temp->mutex)) == 0){
 				if(temp->validity && areInList(startList,(temp->offset)+1,(temp->offset)+numBlocksWidth,(temp->offset)+1+numBlocksWidth)){
+					temp->validity = 0;
+					int err=pthread_mutex_unlock(&(temp->mutex));
+					if(err!=0)
+						error(err,"pthread_mutex_unlock");
+					return temp;
+				}else{
+					pthread_mutex_unlock(&(temp->mutex));
+				}
+			}	
+		}
+		temp = temp->next;
+	}
+	return NULL;
+}
+
+lockableNode* getFirstElemFor422(lockableNode* startList){
+	lockableNode *temp = startList;
+	while(temp != NULL){
+		if((temp->offset)%2 == 0){
+			if( pthread_mutex_trylock(&(temp->mutex)) == 0){
+				if(temp->validity && isInList(startList,(temp->offset)+1)){
 					temp->validity = 0;
 					int err=pthread_mutex_unlock(&(temp->mutex));
 					if(err!=0)
@@ -231,7 +266,7 @@ void computeDCT(int *channel, int y, int x,int offset){
 	int lineCoord;
 	int colCoord;
 	for(i = 0; i < 8; i++){
-		lineCoord = (i+ 8*(offset/(y/8)))*x;
+		lineCoord = (i+ 8*(offset/(x/8)))*x;
 		for(j = 0; j < 8; j++){
 			temp[i][j] = 0.0;
 			for(k = 0; k < 8; k++){
@@ -246,7 +281,7 @@ void computeDCT(int *channel, int y, int x,int offset){
 			for(k = 0; k < 8; k++){
 				temp2+=C[i][k]*temp[k][j];
 			}
-			lineCoord = (i+ 8*(offset/(y/8)))*x;
+			lineCoord = (i+ 8*(offset/(x/8)))*x;
 			colCoord = j+ (8*(offset % (x/8)));
 			*(channel+lineCoord+colCoord) = ROUND(temp2);
 		}
@@ -288,7 +323,7 @@ void* dispatchForProcessing(void *arg){
 			}
 			pthread_mutex_unlock(&mutexDCTCb);
 			//printf("thread ends\n");
-		}else{
+		}else if(b == 0){
 			pthread_mutex_lock(&mutexDCTCb);
 			size = numConsumedDCTCb;
 			while(size < (Cbline/8)*(Cbcolumn/8)){
@@ -298,11 +333,35 @@ void* dispatchForProcessing(void *arg){
 				sem_wait(&semDCTCbchan);
 				lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
 				while(blockindexNode == NULL){
-					printf("waiting");
+					//printf("waiting");
 					sem_wait(&semDCTCbchan);
 					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
 				}
-				computeDCT(Cbchannel,Cbline,Cbcolumn,(blockindexNode->offset)/2);
+				int oldOffset = (blockindexNode->offset)/2;
+				int i = oldOffset/Yline;
+				int j = oldOffset%Ycolumn;
+				int newOffset = (i/2)*Cbcolumn + (j/2);
+				computeDCT(Cbchannel,Cbline,Cbcolumn,newOffset);
+				pthread_mutex_lock(&mutexDCTCb);
+				size = numConsumedDCTCb;
+			}
+			pthread_mutex_unlock(&mutexDCTCb);
+			//printf("thread ends\n");
+		}else{
+			pthread_mutex_lock(&mutexDCTCb);
+			size = numConsumedDCTCb;
+			while(size < (Cbline/8)*(Cbcolumn/8)){
+				numConsumedDCTCb += 1;
+				//printf("%d-Cb \n",numConsumedDCTCb);
+				pthread_mutex_unlock(&mutexDCTCb);
+				sem_wait(&semDCTCbchan);
+				lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
+				while(blockindexNode == NULL){
+					//printf("waiting");
+					sem_wait(&semDCTCbchan);
+					lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
+				}
+				computeDCT(Cbchannel,Cbline,Cbcolumn,(blockindexNode->offset)/2); //ok
 				pthread_mutex_lock(&mutexDCTCb);
 				size = numConsumedDCTCb;
 			}
@@ -325,7 +384,7 @@ void* dispatchForProcessing(void *arg){
 			}
 			pthread_mutex_unlock(&mutexDCTCr);
 			//printf("thread ends\n");
-		}else{
+		}else if(b == 0){
 			pthread_mutex_lock(&mutexDCTCr);
 			size = numConsumedDCTCr;
 			while(size < (Crline/8)*(Crcolumn/8)){
@@ -338,7 +397,31 @@ void* dispatchForProcessing(void *arg){
 					sem_wait(&semDCTCrchan);
 					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
 				}
-				computeDCT(Crchannel,Crline,Crcolumn,(blockindexNode->offset)/2);
+				int oldOffset = (blockindexNode->offset)/2;
+				int i = oldOffset/Yline;
+				int j = oldOffset%Ycolumn;
+				int newOffset = (i/2)*Crcolumn + (j/2);
+				computeDCT(Crchannel,Crline,Crcolumn,newOffset);
+				pthread_mutex_lock(&mutexDCTCr);
+				size = numConsumedDCTCr;
+			}
+			pthread_mutex_unlock(&mutexDCTCr);
+			//printf("thread ends\n");
+		}else{
+			pthread_mutex_lock(&mutexDCTCr);
+			size = numConsumedDCTCr;
+			while(size < (Crline/8)*(Crcolumn/8)){
+				numConsumedDCTCr += 1;
+				//printf("%d-Cb \n",numConsumedDCTCb);
+				pthread_mutex_unlock(&mutexDCTCr);
+				sem_wait(&semDCTCrchan);
+				lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
+				while(blockindexNode == NULL){
+					//printf("waiting");
+					sem_wait(&semDCTCrchan);
+					lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
+				}
+				computeDCT(Crchannel,Crline,Crcolumn,(blockindexNode->offset)/2); //ok
 				pthread_mutex_lock(&mutexDCTCr);
 				size = numConsumedDCTCr;
 			}
