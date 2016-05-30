@@ -34,6 +34,7 @@ int chromQuantTable[64] = {17,18,24,47,99,99,99,99,
 			99,99,99,99,99,99,99,99};
 
 //quantize an 8x8 block
+//wrong pretty sure
 void quantization(int *channel,int width, int offset, int *quantTable){
 	int i;
 	int j;
@@ -79,7 +80,7 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 	int lineCoord;
 	int colCoord;
 	for(i = 0; i < 8; i++){
-		lineCoord = (i+ 8*(offset/(y/8)))*x;
+		lineCoord = (i+ 8*(offset/(x/8)))*x;
 		for(j = 0; j < 8; j++){
 			temp[i][j] = 0.0;
 			for(k = 0; k < 8; k++){
@@ -94,7 +95,7 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 			for(k = 0; k < 8; k++){
 				temp2+=C[i][k]*temp[k][j];
 			}
-			lineCoord = (i+ 8*(offset/(y/8)))*x;
+			lineCoord = (i+ 8*(offset/(x/8)))*x;
 			colCoord = j+ (8*(offset % (x/8)));
 			*(channel+lineCoord+colCoord) = ROUND(temp2);
 		}
@@ -103,6 +104,7 @@ void computeDCT(int *channel, int x, int y, double C[8][8],double Ct[8][8], int 
 
 void computeAllDCT(int *channel, int width, int height){
 	int numBlocks = (width/8) * (height/8);
+	printf("numBlocks : %d,width : %d,height : %d\n",numBlocks,width,height);
 	int i;
 	for(i = 0; i < numBlocks; i++){
 		computeDCT(channel,width,height,C,Ct,i);
@@ -141,7 +143,7 @@ void downsample(uchar *pixel, int b, int x, int y, int *Ychannel, int *Cbchannel
 	}
 
 }
-int zigzagging(int *channel){
+/**int zigzagging(int *channel){
 	int i;
 	int j;
 	int aux[64]={channel[0], channel[1], channel[8], channel[16], channel[9], channel[2], channel[3], channel[10], 
@@ -157,7 +159,7 @@ int zigzagging(int *channel){
 	printf("%d ", aux[i]);
 		}
 return aux;
-}
+}**/
 //should be called with an image argument
 //should be called with  options with argument
 // option is -b with values corresponding to downsampling ratios
