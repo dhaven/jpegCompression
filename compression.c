@@ -143,6 +143,28 @@ void downsample(uchar *pixel, int b, int x, int y, int *Ychannel, int *Cbchannel
 	}
 
 }
+
+void zigzagging(int *channel, int size){
+    
+    int i, j, m, n;
+    m=size;
+    int array_zig[m*m];
+
+        for (i = n = 0; i < m * 2; i++)
+    {
+        for (j = (i < m) ? 0 : i-m+1; j <= i && j < m; j++)
+        {
+            array_zig[n]=channel[(i&1)? j*(m-1)+i : (i-j)*m+j ] ;
+            n++;
+        }
+    }
+    channel = array_zig;
+    
+    for (i=0;i<m*m;i++){
+        printf("%d ", channel[i]);
+    }
+    
+}
 /**int zigzagging(int *channel){
 	int i;
 	int j;
