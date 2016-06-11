@@ -58,6 +58,8 @@ void main(int argc, void** argv){
 
 	//Create OpenCL kernel:
 	cl_kernel kernel = clCreateKernel(program, "vec_add", NULL);
+	
+
 
 	//Create buffer objects and write data to device
 	cl_mem bufferA = clCreateBuffer(context, CL_MEM_READ_ONLY, datasize,NULL,NULL);
@@ -75,11 +77,14 @@ void main(int argc, void** argv){
 	size_t globalWorkSize[1] = {elements};
 	errNum = clEnqueueNDRangeKernel(commandQueue, kernel,1,NULL,globalWorkSize,NULL,0,NULL,NULL);
 
+	//wait for the commands to complete before reading back results
+	clFinish(commandQueue);
+
 	//Copy the output buffer back to the host
 	clEnqueueReadBuffer(commandQueue,bufferC,CL_TRUE,0,datasize,result,0,NULL,NULL);
-	for(i = 0; i < elements; i++){
+	/**for(i = 0; i < elements; i++){
 		printf("%f,",result[i]);
-	}
+	}**/
 	free(source_str);
 }
 

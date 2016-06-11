@@ -8,5 +8,8 @@
 
 
 void main(int argc, char *argv[]){
-	printf("%ld\n",sysconf(_SC_NPROCESSORS_ONLN));
+	int *line = (int*) malloc(sizeof(int)*10);
+	printf("size : %lu\n",sizeof(line));
+	free(line);
+	printf("%lu\n",sizeof(unsigned char));
 }
