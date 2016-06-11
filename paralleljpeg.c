@@ -589,7 +589,7 @@ void main(int argc, char *argv[]){
 	initGlobalVariables();
 	downsample(numThreads);
 	computeCmatrix(C,Ct,8);
-	//DCTparallelStep(numThreads);
+	DCTparallelStep(numThreads);
 	int i;
 	int j;
 	for(i = 0; i < Yline; i++){

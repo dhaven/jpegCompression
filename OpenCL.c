@@ -25,8 +25,8 @@ int *Ychannel;
 int *Cbchannel;
 int *Crchannel;
 uchar *data;
-double C[8][8];
-double Ct[8][8];
+double C[64];
+double Ct[64];
 
 typedef struct dimensions{
 	int Yline;
@@ -37,6 +37,23 @@ typedef struct dimensions{
 	int Crcolumn;
 	int cRate;
 } dimensions;
+
+void computeCmatrix(double C[64],double Ct[64],int N){
+	double pi = atan( 1.0 ) * 4.0;
+	int i;
+	int j;
+	int k;
+	for(i = 0; i < N; i++){
+		C[i] = sqrt(1.0/(double)N);
+		Ct[i*8] = C[i];
+	}
+	for(j = 1; j < N; j++){
+		for(k = 0; k < N; k++){
+			C[j*8+k] = sqrt(2.0/(double)N)*cos((j*(2*k+1)*pi)/(2.0*N));
+			Ct[k*8+j] = C[j*8+k];
+		}
+	}
+}
 
 int main(int argc, char* argv[]){
 	int x,y,n;
@@ -75,6 +92,9 @@ int main(int argc, char* argv[]){
 		dim.Crcolumn = x/2;
 		dim.cRate = 0;
 	}
+
+	computeCmatrix(C,Ct,8);
+
 	//select a platform
 	cl_platform_id firstPlatformId;
 	cl_uint numPlatforms;
@@ -129,14 +149,17 @@ int main(int argc, char* argv[]){
 		exit(-1);
 	}
 
-	//Create OpenCL kernel:
-	cl_kernel kernel = clCreateKernel(program, "downscaling", NULL);
-
 	//local channels
 	Ychannel = (int*) malloc(dim.Yline*dim.Ycolumn*sizeof(int));
 	Cbchannel = (int*) malloc(dim.Cbline*dim.Cbcolumn*sizeof(int));
 	Crchannel = (int*) malloc(dim.Crline*dim.Crcolumn*sizeof(int));
 	//uchar *imgRet = (uchar*) malloc(dim.Yline*dim.Ycolumn*3*sizeof(uchar));
+
+
+	/*-------------------------------------------------STEP 1 DOWNSAMPLING-------------------------------------------------------*/
+	
+	//Create OpenCL kernel:
+	cl_kernel kernel = clCreateKernel(program, "downscaling", NULL);
 
 	//Create buffer objects and write data to device
 	cl_int error;
@@ -156,12 +179,6 @@ int main(int argc, char* argv[]){
 	if(error != CL_SUCCESS)
 		printf("error\n");
 
-	//cl_mem bufferA = clCreateBuffer(context, CL_MEM_READ_ONLY, datasize,NULL,NULL);
-	//cl_mem bufferB = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(dimensions),NULL,NULL);
-	//cl_mem bufferC = clCreateBuffer(context, CL_MEM_WRITE_ONLY, datasize, NULL,NULL);
-	//clEnqueueWriteBuffer(commandQueue,bufferA,CL_TRUE,0,datasize,(const void*)a,0,NULL,NULL);
-	//clEnqueueWriteBuffer(commandQueue,bufferB,CL_TRUE,0,sizeof(dimensions),(const void*)&dim,0,NULL,NULL);
-
 	error = clEnqueueWriteBuffer(commandQueue,bufferImage,CL_TRUE,0,dim.Yline*dim.Ycolumn*3*sizeof(uchar),(const void*)data,0,NULL,NULL);
 	if(error != CL_SUCCESS)
 		printf("error enqueuing buffer 1\n");
@@ -176,21 +193,53 @@ int main(int argc, char* argv[]){
 	clSetKernelArg(kernel,2,sizeof(cl_mem),&bufferCb);
 	clSetKernelArg(kernel,3,sizeof(cl_mem),&bufferCr);
 	clSetKernelArg(kernel,4,sizeof(cl_mem),&bufferDim);
-
-	//errNum = clSetKernelArg(kernel,0,sizeof(cl_mem),&bufferA);
-	//errNum = clSetKernelArg(kernel,1,sizeof(cl_mem),&bufferB);
-	//errNum = clSetKernelArg(kernel,2,sizeof(cl_mem),&bufferC);
 	
 	//Queue the kernel up for execution across the array
 	size_t globalWorkSize[1] = {dim.Yline};
 	clEnqueueNDRangeKernel(commandQueue, kernel,1,NULL,globalWorkSize,NULL,0,NULL,NULL);
 
-	//size_t globalWorkSize[1] = {elements};
-	//errNum = clEnqueueNDRangeKernel(commandQueue, kernel,1,NULL,globalWorkSize,NULL,0,NULL,NULL);
-
 	//wait for the commands to complete before reading back results
 	clFinish(commandQueue);
 
+	/*------------------------------------------------STEP 2 : DCT computation------------------------------------------------*/
+	
+	//Create OpenCL kernel:
+	cl_kernel kernel2 = clCreateKernel(program, "DCTtransform", NULL);
+	
+	double answ[64];
+	//Create buffer objects and write data to device
+	cl_mem bufferC = clCreateBuffer(context, CL_MEM_READ_ONLY,8*8*sizeof(double),NULL,&error);
+	if(error != CL_SUCCESS)
+		printf("error\n");
+	cl_mem bufferCt = clCreateBuffer(context, CL_MEM_READ_ONLY,8*8*sizeof(double),NULL,&error);
+	if(error != CL_SUCCESS)
+		printf("error\n");
+
+	error = clEnqueueWriteBuffer(commandQueue,bufferC,CL_TRUE,0,8*8*sizeof(double),(const void*)C,0,NULL,NULL);
+	if(error != CL_SUCCESS)
+		printf("error enqueuing buffer 1\n");
+	error = clEnqueueWriteBuffer(commandQueue,bufferCt,CL_TRUE,0,8*8*sizeof(double),(const void*)Ct,0,NULL,NULL);
+	if(error != CL_SUCCESS)
+		printf("error enqueuing buffer 2\n");
+	
+	//Set kernel arguments
+	clSetKernelArg(kernel2,0,sizeof(cl_mem),&bufferC);
+	clSetKernelArg(kernel2,1,sizeof(cl_mem),&bufferCt);
+	clSetKernelArg(kernel2,2,sizeof(cl_mem),&bufferY);
+	clSetKernelArg(kernel2,3,sizeof(cl_mem),&bufferCb);
+	clSetKernelArg(kernel2,4,sizeof(cl_mem),&bufferCr);
+	clSetKernelArg(kernel2,5,sizeof(cl_mem),&bufferDim);
+
+	//Queue the kernel up for execution across the array
+	int numBlocksY = (dim.Yline/8)*(dim.Ycolumn/8);
+	int numBlocksCb = (dim.Cbline/8)*(dim.Cbcolumn/8);
+	int numBlocksCr = (dim.Crline/8)*(dim.Crcolumn/8);
+	size_t globalWorkSize2[1] = {numBlocksY+numBlocksCb+numBlocksCr};
+	clEnqueueNDRangeKernel(commandQueue, kernel2,1,NULL,globalWorkSize2,NULL,0,NULL,NULL);
+
+	//wait for the commands to complete before reading back results
+	clFinish(commandQueue);
+	
 	//Copy the output buffer back to the host
 	error =clEnqueueReadBuffer(commandQueue,bufferY,CL_TRUE,0,dim.Yline*dim.Ycolumn*sizeof(int),Ychannel,0,NULL,NULL);
 	if(error != CL_SUCCESS)
@@ -201,25 +250,26 @@ int main(int argc, char* argv[]){
 	error =clEnqueueReadBuffer(commandQueue,bufferCr,CL_TRUE,0,dim.Crline*dim.Crcolumn*sizeof(int),Crchannel,0,NULL,NULL);
 	if(error != CL_SUCCESS)
 		printf("error with reading buffer\n");
-	int j;
+	
 	printf("Ychannel\n");
+	int j;
 	for(i = 0; i < dim.Yline; i++){
 		for(j = 0; j < dim.Ycolumn; j++){
-			printf("%d ",Ychannel[i*dim.Yline+j]);
+			printf("%d ",Ychannel[i*dim.Ycolumn+j]);
 		}
 		printf("\n");
 	}
 	printf("Cbchannel\n");
 	for(i = 0; i < dim.Cbline; i++){
 		for(j = 0; j < dim.Cbcolumn; j++){
-			printf("%d ",Cbchannel[i*dim.Cbline+j]);
+			printf("%d ",Cbchannel[i*dim.Cbcolumn+j]);
 		}
 		printf("\n");
 	}
 	printf("Crchannel\n");
 	for(i = 0; i < dim.Crline; i++){
 		for(j = 0; j < dim.Crcolumn; j++){
-			printf("%d ",Crchannel[i*dim.Crline+j]);
+			printf("%d ",Crchannel[i*dim.Crcolumn+j]);
 		}
 		printf("\n");
 	}
