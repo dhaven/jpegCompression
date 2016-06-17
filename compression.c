@@ -34,13 +34,16 @@ int chromQuantTable[64] = {17,18,24,47,99,99,99,99,
 			99,99,99,99,99,99,99,99};
 
 //quantize an 8x8 block
-//wrong pretty sure
 void quantization(int *channel,int width, int offset, int *quantTable){
 	int i;
 	int j;
+	int lineCoord;
+	int colCoord;
 	for(i = 0; i < 8; i++){
 		for(j = 0; j < 8; j++){
-			channel[i*width+j] = ROUND(channel[(i*width+j)+(8*offset)]/quantTable[(i*width+j)+(8*offset)]);
+			lineCoord = (i+ 8*(offset/(width/8)))*width;
+			colCoord = j+ (8*(offset % (width/8)));
+			channel[lineCoord+colCoord] = ROUND(channel[lineCoord+colCoord]/quantTable[i*8+j]);
 		}
 	}
 }
@@ -224,7 +227,7 @@ void main(int argc, char *argv[]){
 		Crline = y/2;
 		Crcolumn = x/2;
 	}
-	int channelY[256] = {52,55,61,66,70,61,64,73,52,55,61,66,70,61,64,73,
+	/**int channelCb[256] = {52,55,61,66,70,61,64,73,52,55,61,66,70,61,64,73,
 					63,59,55,90,109,85,69,72,63,59,55,90,109,85,69,72,
 					62,59,68,113,144,104,66,73,62,59,68,113,144,104,66,73,
 					63,58,71,122,154,106,70,69,63,58,71,122,154,106,70,69,
@@ -239,20 +242,20 @@ void main(int argc, char *argv[]){
 					67,61,68,104,126,88,68,70,67,61,68,104,126,88,68,70,
 					79,65,60,70,77,68,58,75,79,65,60,70,77,68,58,75,
 					85,71,64,59,55,61,65,83,85,71,64,59,55,61,65,83,
-					87,79,69,68,65,76,78,94,87,79,69,68,65,76,78,94};
+					87,79,69,68,65,76,78,94,87,79,69,68,65,76,78,94};**/
 	
-	//int channelY[Yline*Ycolumn];
+	int channelY[Yline*Ycolumn];
 	int channelCb[Cbline*Cbcolumn];
 	int channelCr[Crline*Crcolumn];
-	//downsample(data,b,x,y,channelY,channelCb,channelCr);
+	downsample(data,b,x,y,channelY,channelCb,channelCr);
 	computeCmatrix(C,Ct,8);
-	computeAllDCT(channelY,16,16);
+	computeAllDCT(channelY,Ycolumn,Yline);
 	//computeDCT(channelY,Ycolumn,Yline,C,Ct,0);
-	//computeAllDCT(channelCb,Cbcolumn,Cbline);
-	//computeAllDCT(channelCr,Crcolumn,Crline);
-	quantizeAll(channelY,16,16,lumQuantTable);
-	//quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
-	//quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
+	computeAllDCT(channelCb,Cbcolumn,Cbline);
+	computeAllDCT(channelCr,Crcolumn,Crline);
+	quantizeAll(channelY,Ycolumn,Yline,lumQuantTable);
+	quantizeAll(channelCb,Cbcolumn,Cbline,chromQuantTable);
+	quantizeAll(channelCr,Crcolumn,Crline,chromQuantTable);
 	printf("Y channel\n");
 	printf("\n");
 	int i;
@@ -263,14 +266,14 @@ void main(int argc, char *argv[]){
 		}
 		printf("\n");
 	}**/
-	for(i = 0; i < 16; i++){
-		for(j = 0; j < 16; j++){
-			printf("%d ",channelY[i*16 +j]);
+	for(i = 0; i < Yline; i++){
+		for(j = 0; j < Ycolumn; j++){
+			printf("%d ",channelY[i*Ycolumn +j]);
 		}
 		printf("\n");
 	}
 	printf("\n");
-	/**printf("Cb channel\n");
+	printf("Cb channel\n");
 	printf("\n");
 	for(i = 0; i < Cbline; i++){
 		for(j = 0; j < Cbcolumn; j++){
@@ -286,7 +289,7 @@ void main(int argc, char *argv[]){
 			printf("%d ",channelCr[i*Crcolumn +j]);
 		}
 		printf("\n");
-	}**/
+	}
 	stbi_image_free(data);
 }
 

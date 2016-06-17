@@ -55,6 +55,7 @@ void computeCmatrix(double C[64],double Ct[64],int N){
 	}
 }
 
+//the call is : gcc OpenCL.c -o open -I/opt/intel/opencl-1.2-5.0.0.43/include -lOpenCL -lm
 int main(int argc, char* argv[]){
 	int x,y,n;
 	int option;
@@ -239,7 +240,29 @@ int main(int argc, char* argv[]){
 
 	//wait for the commands to complete before reading back results
 	clFinish(commandQueue);
+
+	/*------------------------------------------------STEP 3 : quantization----------------------------------------------------*/
+
+	//Create OpenCL kernel:
+	cl_kernel kernel3 = clCreateKernel(program, "Quantization", NULL);
+
+	//no buffers need to be created or written because all information allready in device global memory 
+
+	//Set kernel arguments
+	clSetKernelArg(kernel3,0,sizeof(cl_mem),&bufferY);
+	clSetKernelArg(kernel3,1,sizeof(cl_mem),&bufferCb);
+	clSetKernelArg(kernel3,2,sizeof(cl_mem),&bufferCr);
+	clSetKernelArg(kernel3,3,sizeof(cl_mem),&bufferDim);
 	
+	//Queue the kernel up for execution. Reuse globalWorkSize of previous step
+	clEnqueueNDRangeKernel(commandQueue, kernel3,1,NULL,globalWorkSize2,NULL,0,NULL,NULL);
+	
+	//wait for the commands to complete before reading back results
+	clFinish(commandQueue);
+
+	
+	/*------------------------------------------------testing section----------------------------------------------------*/
+
 	//Copy the output buffer back to the host
 	error =clEnqueueReadBuffer(commandQueue,bufferY,CL_TRUE,0,dim.Yline*dim.Ycolumn*sizeof(int),Ychannel,0,NULL,NULL);
 	if(error != CL_SUCCESS)

@@ -11,6 +11,24 @@ typedef struct dimensions {
 #define ROUND( a )      ( ( (a) < 0 ) ? (int) ( (a) - 0.5 ) : \
                                                   (int) ( (a) + 0.5 ) )
 
+__constant int lumQuantTable[64] = {16,11,10,16,24,40,51,61,
+			12,12,14,19,26,58,60,55,
+			14,13,16,24,40,57,69,56,
+			14,17,22,29,51,87,80,62,
+			18,22,37,56,68,109,103,77,
+			24,35,55,64,81,104,113,92,
+			49,64,78,87,103,121,120,101,
+			72,92,95,98,112,100,103,99};
+
+__constant int chromQuantTable[64] = {17,18,24,47,99,99,99,99,
+			18,21,26,66,99,99,99,99,
+			24,26,56,99,99,99,99,99,
+			47,66,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99};
+
 __kernel void downscaling(__global const unsigned char *img, 
 							__global int *Ychannel,
 							__global int *Cbchannel,
@@ -101,6 +119,7 @@ __kernel void DCTtransform(__global const double *C,
 							__global int *Cbchannel,
 							__global int *Crchannel,
 							__global const dimensions *b){
+
 	int Yline = b->Yline;
 	int Ycolumn = b->Ycolumn;
 	int Cbline = b->Cbline;
@@ -119,6 +138,47 @@ __kernel void DCTtransform(__global const double *C,
 	}else{
 		blockId = gid - (Yline/8)*(Ycolumn/8) - (Cbline/8)*(Cbcolumn/8);
 		computeDCT(Crchannel,Crline,Crcolumn,blockId,C,Ct);
+	}
+
+}
+
+void quantization(__global int *channel,int width, int offset, __constant int *quantTable){
+	int i;
+	int j;
+	int lineCoord;
+	int colCoord;
+	for(i = 0; i < 8; i++){
+		for(j = 0; j < 8; j++){
+			lineCoord = (i+ 8*(offset/(width/8)))*width;
+			colCoord = j+ (8*(offset % (width/8)));
+			channel[lineCoord+colCoord] = ROUND(channel[lineCoord+colCoord]/quantTable[i*8+j]);
+		}
+	}
+}
+
+__kernel void Quantization(__global int *Ychannel,
+														__global int *Cbchannel,
+														__global int *Crchannel,
+														__global const dimensions *b){
+
+	int Yline = b->Yline;
+	int Ycolumn = b->Ycolumn;
+	int Cbline = b->Cbline;
+	int Cbcolumn = b->Cbcolumn;
+	int Crline = b->Crline;
+	int Crcolumn = b->Crcolumn;
+	
+	int gid = get_global_id(0);
+	int blockId;
+	if(gid < (Yline/8)*(Ycolumn/8)){
+		blockId = gid;
+		quantization(Ychannel,Ycolumn,blockId,lumQuantTable);
+	}else if(gid < (Yline/8)*(Ycolumn/8)+(Cbline/8)*(Cbcolumn/8)){
+		blockId = gid - (Yline/8)*(Ycolumn/8);
+		quantization(Cbchannel,Cbcolumn,blockId,chromQuantTable);
+	}else{
+		blockId = gid - (Yline/8)*(Ycolumn/8) - (Cbline/8)*(Cbcolumn/8);
+		quantization(Crchannel,Crcolumn,blockId,chromQuantTable);
 	}
 
 }
