@@ -26,6 +26,23 @@ int *Cbchannel;
 int *Crchannel;
 uchar *data;
 
+int lumQuantTable[64] = {16,11,10,16,24,40,51,61,
+			12,12,14,19,26,58,60,55,
+			14,13,16,24,40,57,69,56,
+			14,17,22,29,51,87,80,62,
+			18,22,37,56,68,109,103,77,
+			24,35,55,64,81,104,113,92,
+			49,64,78,87,103,121,120,101,
+			72,92,95,98,112,100,103,99};
+
+int chromQuantTable[64] = {17,18,24,47,99,99,99,99,
+			18,21,26,66,99,99,99,99,
+			24,26,56,99,99,99,99,99,
+			47,66,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99};
 int numConsumedDCTY;
 pthread_mutex_t mutexDCTY;
 pthread_mutex_t mutexDwnSclY;
@@ -43,6 +60,21 @@ pthread_mutex_t mutexDCTCr;
 pthread_mutex_t mutexDwnSclCr;
 lockableNode *buffDCTCrchan = NULL;
 sem_t semDCTCrchan;
+
+int numConsumedQuantY;
+pthread_mutex_t mutexQuantY;
+lockableNode *buffQuantYchan = NULL;
+sem_t semQuantYchan;
+
+int numConsumedQuantCb;
+pthread_mutex_t mutexQuantCb;
+lockableNode *buffQuantCbchan = NULL;
+sem_t semQuantCbchan;
+
+int numConsumedQuantCr;
+pthread_mutex_t mutexQuantCr;
+lockableNode *buffQuantCrchan = NULL;
+sem_t semQuantCrchan;
 
 void computeCmatrix(double C[8][8],double Ct[8][8],int N){
 	double pi = atan( 1.0 ) * 4.0;
@@ -159,6 +191,7 @@ lockableNode* getFirstElemFor420(lockableNode* startList, int numBlocksWidth){
 	return NULL;
 }
 
+//returns the first 8x8 block for which DCT can be called given downscaling ratio of 4:2:2
 lockableNode* getFirstElemFor422(lockableNode* startList){
 	lockableNode *temp = startList;
 	while(temp != NULL){
@@ -179,6 +212,7 @@ lockableNode* getFirstElemFor422(lockableNode* startList){
 	}
 	return NULL;
 }
+
 
 int addElementAtFront(lockableNode* element, lockableNode** list, pthread_mutex_t *mutex){
 	if(pthread_mutex_trylock(mutex) == 0){
@@ -246,7 +280,7 @@ void* subSampling(void* param){
 			}
 		}
 		int res;
-		//should lockon the list before adding element
+		//should lock on the list before adding element
 		lockableNode *newNode = createNewNode(index);
 		res = addElementAtFront(newNode,&buffDCTYchan,&mutexDwnSclY);
 		while(res != 1){
@@ -315,61 +349,133 @@ void computeDCT(int *channel, int y, int x,int offset){
 	}
 }
 
+//returns the index of the block on which DCT will be applied
+int computeDCTForChannelY(int *size){
+	numConsumedDCTY += 1;
+	int index;
+	//printf("%d-Y \n",numConsumedDCTY);
+	pthread_mutex_unlock(&mutexDCTY);
+	sem_wait(&semDCTYchan);
+	lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTYchan);
+	index = blockindexNode->offset;
+	computeDCT(Ychannel,Yline,Ycolumn,blockindexNode->offset);
+	pthread_mutex_lock(&mutexDCTY);
+	*size = numConsumedDCTY;
+	return index;
+}
 
+//returns the index of the block on which DCT will be applied
+int computeDCTForChannelCb(int *size){
+	numConsumedDCTCb += 1;
+	pthread_mutex_unlock(&mutexDCTCb);
+	sem_wait(&semDCTCbchan);
+	int index = 0;
+	if(b == 4){
+		lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCbchan);
+		index = blockindexNode->offset;
+		computeDCT(Cbchannel,Cbline,Cbcolumn,blockindexNode->offset);
+		pthread_mutex_lock(&mutexDCTCb);
+		*size = numConsumedDCTCb;
+	}else if(b == 2){
+		lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
+		while(blockindexNode == NULL){
+			sem_wait(&semDCTCbchan);
+			lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
+		}
+		index = (blockindexNode->offset)/2;
+		computeDCT(Cbchannel,Cbline,Cbcolumn,(blockindexNode->offset)/2);
+		pthread_mutex_lock(&mutexDCTCb);
+		*size = numConsumedDCTCb;
+	}else{
+		lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
+		while(blockindexNode == NULL){
+			sem_wait(&semDCTCbchan);
+			lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
+		}
+		//need to compute the corresponding offset in the Cb channel
+		int oldL = (blockindexNode->offset)/(Ycolumn/8);
+		int oldO = (blockindexNode->offset)%(Ycolumn/8);
+		int newL = oldL/2;
+		int newO = oldO/2;
+		int newOffset = newL*((Ycolumn/8)/2) + newO;
+		index = newOffset;
+		computeDCT(Cbchannel,Cbline,Cbcolumn,newOffset);
+		pthread_mutex_lock(&mutexDCTCb);
+		*size = numConsumedDCTCb;
+	}
+	return index;
+}
+
+//returns the index of the block on which the DCT will be applied
+int computeDCTForChannelCr(int *size){
+	numConsumedDCTCr += 1;
+	pthread_mutex_unlock(&mutexDCTCr);
+	sem_wait(&semDCTCrchan);
+	int index = 0;
+	if(b == 4){
+		lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCrchan);
+		index = blockindexNode->offset;
+		computeDCT(Crchannel,Crline,Crcolumn,blockindexNode->offset);
+		pthread_mutex_lock(&mutexDCTCr);
+		*size = numConsumedDCTCr;
+	}else if(b == 2){
+		lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
+		while(blockindexNode == NULL){
+			sem_wait(&semDCTCrchan);
+			lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
+		}
+		index = (blockindexNode->offset)/2;
+		computeDCT(Crchannel,Crline,Crcolumn,(blockindexNode->offset)/2);
+		pthread_mutex_lock(&mutexDCTCr);
+		*size = numConsumedDCTCr;
+	}else{
+		lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
+		while(blockindexNode == NULL){
+			sem_wait(&semDCTCrchan);
+			lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
+		}
+		//need to compute the corresponding offset in the Cr channel
+		int oldL = (blockindexNode->offset)/(Ycolumn/8);
+		int oldO = (blockindexNode->offset)%(Ycolumn/8);
+		int newL = oldL/2;
+		int newO = oldO/2;
+		int newOffset = newL*((Ycolumn/8)/2) + newO;
+		index = newOffset;
+		computeDCT(Crchannel,Crline,Crcolumn,newOffset);
+		pthread_mutex_lock(&mutexDCTCr);
+		*size = numConsumedDCTCr;
+	}
+	return index;
+}
 void* dispatchForProcessing(void *arg){
 	char *param = (char *)arg;
 	int size;
+	int res;
+	int index;
+	lockableNode *newNode = NULL;
 	if(*param == 'y'){
 		pthread_mutex_lock(&mutexDCTY);
-		size = numConsumedDCTY;
+		size = numConsumedDCTY; //need to keep track of how many blocks have already been consumed
 		while(size < (Yline/8)*(Ycolumn/8)){
-			numConsumedDCTY += 1;
-			//printf("%d-Y \n",numConsumedDCTY);
-			pthread_mutex_unlock(&mutexDCTY);
-			sem_wait(&semDCTYchan);
-			lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTYchan);
-			computeDCT(Ychannel,Yline,Ycolumn,blockindexNode->offset);
-			pthread_mutex_lock(&mutexDCTY);
-			size = numConsumedDCTY;
+			index = computeDCTForChannelY(&size);
+			//signal to quantization step that a new block is ready to be processed
+			newNode = createNewNode(index);
+			res = addElementAtFront(newNode,&buffQuantYchan,&mutexQuantY);
+			while(res != 1){
+				res = addElementAtFront(newNode,&buffQuantYchan,&mutexQuantY);
+			}
 		}
 		pthread_mutex_unlock(&mutexDCTY);
-		//printf("thread ends\n");
 	}else if(*param == 'b'){
 		pthread_mutex_lock(&mutexDCTCb);
 		size = numConsumedDCTCb; //need to keep track of how many blocks have already been consumed
 		while(size < (Cbline/8)*(Cbcolumn/8)){
-			numConsumedDCTCb += 1;
-			pthread_mutex_unlock(&mutexDCTCb);
-			sem_wait(&semDCTCbchan);
-			if(b == 4){
-				lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCbchan);
-				computeDCT(Cbchannel,Cbline,Cbcolumn,blockindexNode->offset);
-				pthread_mutex_lock(&mutexDCTCb);
-				size = numConsumedDCTCb;
-			}else if(b == 2){
-				lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
-				while(blockindexNode == NULL){
-					sem_wait(&semDCTCbchan);
-					lockableNode* blockindexNode = getFirstElemFor422(buffDCTCbchan);
-				}
-				computeDCT(Cbchannel,Cbline,Cbcolumn,(blockindexNode->offset)/2); //ok
-				pthread_mutex_lock(&mutexDCTCb);
-				size = numConsumedDCTCb;
-			}else{
-				lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
-				while(blockindexNode == NULL){
-					sem_wait(&semDCTCbchan);
-					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCbchan,Ycolumn/8);
-				}
-				//need to compute the corresponding offset in the Cb channel
-				int oldL = (blockindexNode->offset)/(Ycolumn/8);
-				int oldO = (blockindexNode->offset)%(Ycolumn/8);
-				int newL = oldL/2;
-				int newO = oldO/2;
-				int newOffset = newL*((Ycolumn/8)/2) + newO;
-				computeDCT(Cbchannel,Cbline,Cbcolumn,newOffset);
-				pthread_mutex_lock(&mutexDCTCb);
-				size = numConsumedDCTCb;
+			index = computeDCTForChannelCb(&size);
+			//signal to quantization step that a new block is ready to be processed
+			newNode = createNewNode(index);
+			res = addElementAtFront(newNode,&buffQuantCbchan,&mutexQuantCb);
+			while(res != 1){
+				res = addElementAtFront(newNode,&buffQuantCbchan,&mutexQuantCb);
 			}
 		}
 		pthread_mutex_unlock(&mutexDCTCb);
@@ -377,38 +483,12 @@ void* dispatchForProcessing(void *arg){
 		pthread_mutex_lock(&mutexDCTCr);
 		size = numConsumedDCTCr; //need to keep track of how many blocks have already been consumed
 		while(size < (Crline/8)*(Crcolumn/8)){
-			numConsumedDCTCr += 1;
-			pthread_mutex_unlock(&mutexDCTCr);
-			sem_wait(&semDCTCrchan);
-			if(b == 4){
-				lockableNode* blockindexNode = getFirstUnlockedElem(buffDCTCrchan);
-				computeDCT(Crchannel,Crline,Crcolumn,blockindexNode->offset);
-				pthread_mutex_lock(&mutexDCTCr);
-				size = numConsumedDCTCr;
-			}else if(b == 2){
-				lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
-				while(blockindexNode == NULL){
-					sem_wait(&semDCTCrchan);
-					lockableNode* blockindexNode = getFirstElemFor422(buffDCTCrchan);
-				}
-				computeDCT(Crchannel,Crline,Crcolumn,(blockindexNode->offset)/2); //ok
-				pthread_mutex_lock(&mutexDCTCr);
-				size = numConsumedDCTCr;
-			}else{
-				lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
-				while(blockindexNode == NULL){
-					sem_wait(&semDCTCrchan);
-					lockableNode* blockindexNode = getFirstElemFor420(buffDCTCrchan,Ycolumn/8);
-				}
-				//need to compute the corresponding offset in the Cr channel
-				int oldL = (blockindexNode->offset)/(Ycolumn/8);
-				int oldO = (blockindexNode->offset)%(Ycolumn/8);
-				int newL = oldL/2;
-				int newO = oldO/2;
-				int newOffset = newL*((Ycolumn/8)/2) + newO;
-				computeDCT(Crchannel,Crline,Crcolumn,newOffset);
-				pthread_mutex_lock(&mutexDCTCr);
-				size = numConsumedDCTCr;
+			index = computeDCTForChannelCr(&size);
+			//signal to quantization step that a new block is ready to be processed
+			newNode = createNewNode(index);
+			res = addElementAtFront(newNode,&buffQuantCrchan,&mutexQuantCr);
+			while(res != 1){
+				res = addElementAtFront(newNode,&buffQuantCrchan,&mutexQuantCr);
 			}
 		}
 		pthread_mutex_unlock(&mutexDCTCr);
@@ -421,10 +501,12 @@ void DCTparallelStep(int numThreads){
 	pthread_t YchanThreads[numThreads];
 	int i;
 	int err;
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	for(i = 0; i < numThreads; i++){
 		char arg = 'y';
-		//printf("YthreadCreated\n");
-		err = pthread_create(&(YchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		err = pthread_create(&(YchanThreads[i]),&attr,&dispatchForProcessing,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
@@ -432,7 +514,38 @@ void DCTparallelStep(int numThreads){
 	for(i = 0; i < numThreads; i++){
 		char arg = 'b';
 		printf("CbthreadCreated\n");
-		err = pthread_create(&(CbchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		err = pthread_create(&(CbchanThreads[i]),&attr,&dispatchForProcessing,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+	pthread_t CrchanThreads[numThreads];
+	for(i = 0; i < numThreads; i++){
+		char arg = 'r';
+		err = pthread_create(&(CrchanThreads[i]),&attr,&dispatchForProcessing,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+}
+
+void* Quantization(void *arg){
+	return NULL;
+}
+void QuantizationThreadCreation(int numThreads){
+	pthread_t YchanThreads[numThreads];
+	int i;
+	int err;
+	for(i = 0; i < numThreads; i++){
+		char arg = 'y';
+		//printf("YthreadCreated\n");
+		err = pthread_create(&(YchanThreads[i]),NULL,&Quantization,(void *)&arg);
+		if(err!=0)
+			error(err,"pthread_create");
+	}
+	pthread_t CbchanThreads[numThreads];
+	for(i = 0; i < numThreads; i++){
+		char arg = 'b';
+		printf("CbthreadCreated\n");
+		err = pthread_create(&(CbchanThreads[i]),NULL,&Quantization,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
@@ -440,7 +553,7 @@ void DCTparallelStep(int numThreads){
 	for(i = 0; i < numThreads; i++){
 		char arg = 'r';
 		//printf("CrthreadCreated\n");
-		err = pthread_create(&(CrchanThreads[i]),NULL,&dispatchForProcessing,(void *)&arg);
+		err = pthread_create(&(CrchanThreads[i]),NULL,&Quantization,(void *)&arg);
 		if(err!=0)
 			error(err,"pthread_create");
 	}
@@ -473,15 +586,24 @@ void initGlobalVariables(){
 	sem_init(&semDCTYchan, 0, 0);
 	sem_init(&semDCTCbchan, 0, 0);
 	sem_init(&semDCTCrchan, 0, 0);
+	sem_init(&semQuantYchan, 0, 0);
+	sem_init(&semQuantCbchan, 0, 0);
+	sem_init(&semQuantCrchan, 0, 0);
 	pthread_mutex_init(&mutexDCTY,NULL);
 	pthread_mutex_init(&mutexDCTCb,NULL);
 	pthread_mutex_init(&mutexDCTCr,NULL);
 	pthread_mutex_init(&mutexDwnSclY,NULL);
 	pthread_mutex_init(&mutexDwnSclCb,NULL);
 	pthread_mutex_init(&mutexDwnSclCr,NULL);
+	pthread_mutex_init(&mutexQuantY,NULL);
+	pthread_mutex_init(&mutexQuantCb,NULL);
+	pthread_mutex_init(&mutexQuantCr,NULL);
 	numConsumedDCTY = 0;
 	numConsumedDCTCb = 0;
 	numConsumedDCTCr = 0;
+	numConsumedQuantY = 0;
+	numConsumedQuantY = 0;
+	numConsumedQuantY = 0;
 }
 
 void freeGlobalVariables(){
@@ -491,12 +613,18 @@ void freeGlobalVariables(){
 	sem_destroy(&semDCTYchan);
 	sem_destroy(&semDCTCbchan);
 	sem_destroy(&semDCTCrchan);
+	sem_destroy(&semQuantYchan);
+	sem_destroy(&semQuantCbchan);
+	sem_destroy(&semQuantCrchan);
 	pthread_mutex_destroy(&mutexDCTY);
 	pthread_mutex_destroy(&mutexDCTCb);
 	pthread_mutex_destroy(&mutexDCTCr);
 	pthread_mutex_destroy(&mutexDwnSclY);
 	pthread_mutex_destroy(&mutexDwnSclCb);
 	pthread_mutex_destroy(&mutexDwnSclCr);
+	pthread_mutex_destroy(&mutexQuantY);
+	pthread_mutex_destroy(&mutexQuantCb);
+	pthread_mutex_destroy(&mutexQuantCr);
 	
 	int i;
 	lockableNode* tmp = firstBuffer->next;
@@ -510,6 +638,7 @@ void freeGlobalVariables(){
 	}
 	int j;
 	tmp = buffDCTYchan->next;
+	printf("buffer DCT Y\n");
 	while(buffDCTYchan != NULL){
 		printf("%d,",buffDCTYchan->offset);
 		free(buffDCTYchan);
@@ -519,6 +648,7 @@ void freeGlobalVariables(){
 	}
 	printf("\n");
 	tmp = buffDCTCbchan->next;
+	printf("buffer DCT Cb\n");
 	while(buffDCTCbchan != NULL){
 		printf("%d,",buffDCTCbchan->offset);
 		free(buffDCTCbchan);
@@ -528,10 +658,41 @@ void freeGlobalVariables(){
 	}
 	printf("\n");
 	tmp = buffDCTCrchan->next;
+	printf("buffer DCT Cr\n");
 	while(buffDCTCrchan != NULL){
 		printf("%d,",buffDCTCrchan->offset);
 		free(buffDCTCrchan);
 		buffDCTCrchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+	tmp = buffQuantYchan->next;
+	printf("buffer Quant Y\n");
+	while(buffQuantYchan != NULL){
+		printf("%d,",buffQuantYchan->offset);
+		free(buffQuantYchan);
+		buffQuantYchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+	tmp = buffQuantCbchan->next;
+	printf("buffer Quant Cb\n");
+	while(buffQuantCbchan != NULL){
+		printf("%d,",buffQuantCbchan->offset);
+		free(buffQuantCbchan);
+		buffQuantCbchan = tmp;
+		if(tmp != NULL)
+			tmp = tmp->next;
+	}
+	printf("\n");
+	tmp = buffQuantCrchan->next;
+	printf("buffer Quant Cr\n");
+	while(buffQuantCrchan != NULL){
+		printf("%d,",buffQuantCrchan->offset);
+		free(buffQuantCrchan);
+		buffQuantCrchan = tmp;
 		if(tmp != NULL)
 			tmp = tmp->next;
 	}
@@ -580,6 +741,7 @@ void main(int argc, char *argv[]){
 	downsample(numThreads);
 	computeCmatrix(C,Ct,8);
 	DCTparallelStep(numThreads);
+	QuantizationThreadCreation(numThreads);
 	int i;
 	int j;
 	for(i = 0; i < Yline; i++){
