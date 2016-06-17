@@ -168,6 +168,59 @@ void zigzagging(int *channel, int size){
     }
     
 }
+
+void RLE(int *channel, int size){
+	struct encodedData data[64];
+	int i;
+	int position=-1;
+	
+	for(i=0; i<size; i++){
+		data[i].rep=0;
+	}
+
+	for(i=0; i<size; i++){	
+		if(channel[i]==channel[i-1]){
+			//printf("channel i-1 %d \n", channel[i-1]);
+			if(position==-1){
+				position=0;
+			}
+			data[position].value=channel[i];
+			data[position].rep=data[position].rep+1;
+				/*("data position rep %d\n ", data[position].rep);
+				printf("valor de i %d \n", i);*/
+		}
+		else{
+			data[position+1].value=channel[i];
+			data[position+1].rep=1;
+			position=position+1;
+
+		}
+	}
+	/*printf("%lu datos ", sizeof(data));*/
+
+	/*for(i=0; i<size; i++){
+		printf("%d ", data[i].value);
+		printf("%d \n", data[i].rep);
+	}	
+
+	*/
+
+	//printf("%d pos ", position);
+
+	int encodedArray[position*2+1];
+
+	for(i=0; i<position+1; i++){
+		encodedArray[i*2]=data[i].value;
+		encodedArray[i*2+1]=data[i].rep;
+	}
+
+
+	for(i=0; i<position*2+2; i++){
+		printf("%d \n", encodedArray[i]);
+	}
+
+
+}
 /**int zigzagging(int *channel){
 	int i;
 	int j;
